@@ -1,0 +1,25 @@
+Trial 1:
+state0_1 = [7_000_000, 0, 0, 7_500]
+t = 2 hours
+
+Trial 2:
+state0_2 = [7_000_000, 0, 0, 6_500]
+3.1: t = 2 hours
+
+Trial 3:
+state0_3 = [7_000_000, 0, 0, 8_500]
+3.1: t = 2 hours
+3.2: t = 6 hours
+
+Trial 4:
+state0_4 = [7_000_000, 0, 0, 9_500]
+4.1: t = 6 hours
+4.2: t = 10 hours
+
+Trial 5:
+state0_5 = [7_000_000, 0, 0, 10_500]
+5.1: 10 hours
+5.2: 16 hours
+5.3: 32 hours
+5.4: 64 hours
+5.5: 128 hours

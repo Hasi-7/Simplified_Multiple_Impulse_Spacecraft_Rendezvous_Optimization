@@ -1,0 +1,1 @@
+initial velocity drastically effects orbit shape with 10500 m/s causing a significantly stretched orbit 
