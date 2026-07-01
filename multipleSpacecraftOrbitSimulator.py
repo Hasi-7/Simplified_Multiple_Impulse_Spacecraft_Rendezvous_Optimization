@@ -42,6 +42,7 @@ if __name__ == "__main__":
     t_eval_end = np.linspace(t_burn, t_end, 5000)
     t_eval = np.linspace(t_start, t_end, 5000)
     t_span = (t_start, t_end)
+    burn = [50, 100]
 
     target_state0 = [7_000_000, 0, 0, speeds[0]]
     chaser_state0 = [7_000_000, -500_000, 500, speeds[0]]
@@ -52,7 +53,7 @@ if __name__ == "__main__":
     target_marker_state = target_sol.sol(t_burn)
     chaser_before_burn_state = chaser_sol.y[:, -1]
 
-    chaser_after_burn_state = apply_burn(chaser_before_burn_state, [500, 0])
+    chaser_after_burn_state = apply_burn(chaser_before_burn_state, burn)
 
     chaser_sol2 = solve_ivp(two_body_ode, (t_burn, t_end), chaser_after_burn_state, t_eval=t_eval_end, dense_output=True, method='DOP853', rtol=1e-6)
 
@@ -66,6 +67,8 @@ if __name__ == "__main__":
     dx_after = chaser_sol2.y[0] - target_after[0]
     dy_after = chaser_sol2.y[1] - target_after[1]
     distance_after = np.sqrt(dx_after**2 + dy_after**2)
+    distance_all = np.concatenate((distance_before, distance_after))
+    min_index = np.argmin(distance_all)
 
     plt.figure(figsize=(8, 5))
 
@@ -100,7 +103,12 @@ if __name__ == "__main__":
     plt.title("Chaser and Target Trajectories")
     plt.grid(True)
     plt.legend(loc="upper right")
-    plt.show()                                           
+    plt.show()                          
+
+    print("Initial distance:", distance_before[0])
+    print("Distance at burn:", distance_before[-1])
+    print("Final distance:", distance_after[-1])
+    print("Minimum distance:", distance_all[min_index])                  
 
     
     
