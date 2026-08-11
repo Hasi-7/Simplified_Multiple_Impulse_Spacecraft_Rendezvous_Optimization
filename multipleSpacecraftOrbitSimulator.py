@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 mu = 3.986 * 10**14
 earth_radius = 6.371e6
 theta = np.linspace(0, 2*np.pi, 300)
+starting_distance_x = 7_000_000
+starting_distance_y = 0
     
 
 def two_body_ode(t, state):
@@ -24,34 +26,40 @@ def two_body_ode(t, state):
     # return derivatives
     return [vx, vy, ax, ay]
 
+def burn_size(v, delta):
+    unit_v = v/np.linalg.norm(v)
+    return delta * unit_v
+
 def apply_burn(state, delta_v):
     # state = [x, y, vx, vy]
     # delta_v = [dvx, dvy]
     # return the updated state
     return [state[0], state[1], state[2] + delta_v[0], state[3] + delta_v[1]]
 
-            
+
 if __name__ == "__main__":
 
-    speeds = [(mu/7_000_000)**0.5]
+    speeds = [(mu/starting_distance_x)**0.5]
     t_start = 0
-    t_end = 4 * 60 * 60
+    t_end = 20 * 60 * 60
     t_burn = 2 * 60 * 60
     t_marker = 2 * 60 * 60
     t_eval_burn = np.linspace(t_start, t_burn, 5000)
     t_eval_end = np.linspace(t_burn, t_end, 5000)
     t_eval = np.linspace(t_start, t_end, 5000)
     t_span = (t_start, t_end)
-    burn = [50, 100]
+    # burn = [50, 100]
 
-    target_state0 = [7_000_000, 0, 0, speeds[0]]
-    chaser_state0 = [7_000_000, -500_000, 500, speeds[0]]
+    target_state0 = [starting_distance_x, starting_distance_y, 0, speeds[0]]
+    chaser_state0 = [starting_distance_x, -500_000, 500, speeds[0]]
 
     target_sol = solve_ivp(two_body_ode, t_span, target_state0, t_eval=t_eval, dense_output=True, method='DOP853', rtol=1e-6)
     chaser_sol = solve_ivp(two_body_ode, (t_start, t_burn), chaser_state0, t_eval=t_eval_burn, dense_output=True, method='DOP853', rtol=1e-6)
 
     target_marker_state = target_sol.sol(t_burn)
     chaser_before_burn_state = chaser_sol.y[:, -1]
+
+    burn = burn_size(chaser_before_burn_state[2:4], 1000)
 
     chaser_after_burn_state = apply_burn(chaser_before_burn_state, burn)
 
@@ -113,3 +121,8 @@ if __name__ == "__main__":
     
     
 
+# Defining coordinates instead of x and y but as velocity and position relative to earth
+# 3 steps for rendezvous
+# 1. Kick your orbit
+# 2. Wait until close
+# 3. Rendezvous Maneuver
