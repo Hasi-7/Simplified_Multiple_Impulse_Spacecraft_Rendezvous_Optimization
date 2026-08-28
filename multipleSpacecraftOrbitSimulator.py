@@ -1,4 +1,5 @@
 from scipy.integrate import solve_ivp
+from scipy.optimize import differential_evolution
 import numpy as np
 import matplotlib.pyplot as plt
 mu = 3.986 * 10**14
@@ -42,7 +43,9 @@ def error(c_state, t_state):
     return J_r, J_v
 
 def fuel_usage(burns):
-    return sum(np.linalg.norm(delta_v) for delta_v in burns.keys())
+    return sum(np.linalg.norm(delta_v) for delta_v, _ in burns)
+
+# Switch to List of Tuples
 
 def cost(errors, weights, burns):
     J_r, J_v = errors
@@ -54,42 +57,49 @@ def cost(errors, weights, burns):
         + w_delta_v * fuel_usage(burns)
     )
 
+# def synodic_period(state):
+#     r = state[0]**2 + state[1]**2
+#     a = (-1)*((mu*))
+
 # Assumptions:
 # All variables are provided correctly
-# Burns are executed in the order that they are stored in the burns dictionary
+# Burns are executed in the order that they are stored in the burns array
 # Every burn is unique
 
-def trajectory_score(c_state, t_state, t_span, t_eval, burns, weights):
-    previous_time = 0
-    target_loc_burn_n = []
+def score(burns, chaser_state, t_sol, t_span, weights = (1 / 100_000**2, 1 / 100**2, 1 / 100)):
+    burns = np.asarray(burns).reshape(-1, 2)
+
+    burn_times = burns[:, 1]
+    if (
+        np.any(burn_times < t_span[0])
+        or np.any(burn_times > t_span[1])
+        or np.any(np.diff(burn_times) <= 0)
+    ):
+        return 1e12
+
+
+    previous_time = t_span[0]
     c_sol = 0
-    t_sol = 0
-    for dv, time in burns.items():
-        t_eval_burn = np.linspace(previous_time, time, 5000)
+    for dv, time in burns:
         
 
-        t_sol = solve_ivp(two_body_ode, t_span, t_state, t_eval=t_eval, dense_output=True, method='DOP853', rtol=1e-6)
-        c_sol = solve_ivp(two_body_ode, (previous_time, time), c_state, t_eval=t_eval_burn, dense_output=True, method='DOP853', rtol=1e-6)
+        
+        c_sol = solve_ivp(two_body_ode, (previous_time, time), chaser_state, method='DOP853', rtol=1e-6)
         
         c_before_burn_state = c_sol.y[:, -1]
         burn = burn_size(c_before_burn_state[2:4], dv)
-        c_state = apply_burn(c_before_burn_state, burn)
-
-        target_loc_burn_n.append(t_sol.sol(t_eval_burn))
+        chaser_state = apply_burn(c_before_burn_state, burn)
 
         previous_time = time
 
-    c_final_sol = solve_ivp(two_body_ode, (previous_time, t_span[1]), c_state, t_eval=np.linspace(previous_time, t_span[1], 5000), dense_output=True, method='DOP853', rtol=1e-6)
+    c_final_sol = solve_ivp(two_body_ode, (previous_time, t_span[1]), chaser_state, method='DOP853', rtol=1e-6)
     
-    target_loc_burn_n.append(t_sol.sol(np.linspace(previous_time, t_span[1], 5000)))
-
     c_final_state = c_final_sol.y[:, -1]
     t_final_state = t_sol.sol(t_span[1])
 
-    return cost(error(c_final_state, t_final_state), weights, burns), target_loc_burn_n
+    return cost(error(c_final_state, t_final_state), weights, burns)
 
-
-def trajectory_history(c_state, t_state, t_span, burns, samples_per_segment=1000):
+def trajectory(c_state, t_state, t_span, burns, weights, samples_per_segment=1000):
     target_times = np.linspace(t_span[0], t_span[1], samples_per_segment * (len(burns) + 1))
     target_sol = solve_ivp(
         two_body_ode,
@@ -107,8 +117,11 @@ def trajectory_history(c_state, t_state, t_span, burns, samples_per_segment=1000
     burn_states = []
     previous_time = t_span[0]
     current_state = c_state
+    t_sol = 0
+    target_loc_burn_n = []
 
-    for dv, burn_time in burns.items():
+
+    for dv, burn_time in burns:
         segment_times = np.linspace(previous_time, burn_time, samples_per_segment)
         segment_sol = solve_ivp(
             two_body_ode,
@@ -118,6 +131,9 @@ def trajectory_history(c_state, t_state, t_span, burns, samples_per_segment=1000
             method='DOP853',
             rtol=1e-6
         )
+
+        t_sol = solve_ivp(two_body_ode, t_span, t_state, t_eval=target_times, dense_output=True, method='DOP853', rtol=1e-6)
+        target_loc_burn_n.append(t_sol.sol(segment_times))
 
         start_index = 0 if not chaser_times else 1
         chaser_times.extend(segment_sol.t[start_index:])
@@ -144,14 +160,29 @@ def trajectory_history(c_state, t_state, t_span, burns, samples_per_segment=1000
     chaser_times.extend(final_sol.t[1:])
     chaser_states.extend(final_sol.y[:, 1:].T)
 
+    target_loc_burn_n.append(t_sol.sol(np.linspace(previous_time, t_span[1], 5000)))
+    t_final_state = t_sol.sol(t_span[1])
+
     return (
         np.asarray(chaser_times),
         np.asarray(chaser_states),
         target_sol,
         np.asarray(burn_times),
         np.asarray(burn_states)
-    )
+    ), cost(error(chaser_states[len(chaser_states)-1], t_final_state), weights, burns), target_loc_burn_n
 
+def rendezvous(c_state0, t_state0, num_burns, weights, t_span):
+    bounds = [(-100, 100), (t_span[0] + 60, t_span[1] - 60)] * num_burns
+    t_eval = np.linspace(t_span[0], t_span[1], 5000)
+    t_sol = solve_ivp(two_body_ode, t_span, t_state0, t_eval=t_eval, dense_output=True, method='DOP853', rtol=1e-6)
+    result = differential_evolution(
+        score, 
+        bounds=bounds,
+        args=(c_state0, t_sol, t_span, weights),
+        rng=np.random.default_rng(42))
+
+    return result.x, result.fun
+    
 
 # set margin of error of 50 meters from target to define rendezvous complete
 # def rendezvous(c_state0, t_state0, t_span, t_eval):
@@ -220,57 +251,35 @@ def trajectory_history(c_state, t_state, t_span, burns, samples_per_segment=1000
 # distance_all = np.concatenate((distance_before, distance_after))
 # min_index = np.argmin(distance_all)
 
-def main():
-    orbit_radius = 7_000_000
-    circular_speed = np.sqrt(mu / orbit_radius)
-    chaser_phase = np.deg2rad(-5)
-
-    target_state = [orbit_radius, 0, 0, circular_speed]
-    chaser_state = [
-        orbit_radius * np.cos(chaser_phase),
-        orbit_radius * np.sin(chaser_phase),
-        -circular_speed * np.sin(chaser_phase),
-        circular_speed * np.cos(chaser_phase)
-    ]
-
-    t_span = (0, 12_000)
-    t_eval = np.linspace(t_span[0], t_span[1], 5000)
-    # Normalize the differently sized position, velocity, and delta-v terms.
-    weights = (1 / 100_000**2, 1 / 100**2, 1 / 100)
-    test_trajectories = {
-        "Small phasing burns": {-20: 600, 20: 6400},
-        "Medium phasing burns": {-35: 600, 35: 6400},
-        "Large phasing burns": {-50: 600, 50: 6400}
-    }
-
-    scores = {}
-    print("Trajectory scores (lower is better):")
-    for name, burns in test_trajectories.items():
-        score, _ = trajectory_score(
-            chaser_state,
-            target_state,
-            t_span,
-            t_eval,
-            burns,
-            weights
-        )
-        scores[name] = score
-        print(f"  {name}: {score:.6f}")
-
-    best_name = min(scores, key=scores.get)
-    best_burns = test_trajectories[best_name]
-    print(f"Plotting lowest-cost trajectory: {best_name}")
-
-    chaser_times, chaser_states, target_sol, burn_times, burn_states = trajectory_history(
+def main(chaser_state, target_state, num_burns, weights, t_span):
+    best_parameters, optimizer_score = rendezvous(
+        chaser_state,
+        target_state,
+        num_burns,
+        weights,
+        t_span
+    )
+    best_burns = np.asarray(best_parameters).reshape(num_burns, 2)
+    history, trajectory_score, _ = trajectory(
         chaser_state,
         target_state,
         t_span,
-        best_burns
+        best_burns,
+        weights
     )
+
+    chaser_times, chaser_states, target_sol, burn_times, burn_states = history
     target_at_chaser_times = target_sol.sol(chaser_times)
     separation = np.linalg.norm(chaser_states[:, :2] - target_at_chaser_times[:2].T, axis=1)
     target_at_burns = target_sol.sol(burn_times)
     burn_separations = np.linalg.norm(burn_states[:, :2] - target_at_burns[:2].T, axis=1)
+
+    print(f"Optimizer score: {optimizer_score:.6f}")
+    print(f"Trajectory score: {trajectory_score:.6f}")
+    print("Best burns (delta-v in m/s, time in s):")
+    for burn_number, (delta_v, burn_time) in enumerate(best_burns, 1):
+        print(f"  Burn {burn_number}: delta-v={delta_v:.3f}, time={burn_time:.3f}")
+    print(f"Final separation: {separation[-1]:.3f} m")
 
     plt.figure(figsize=(9, 5))
     plt.plot(chaser_times / 3600, separation / 1000, label="Chaser-target distance")
@@ -280,7 +289,7 @@ def main():
         plt.annotate(f"Burn {burn_number}", (burn_time / 3600, burn_distance / 1000), xytext=(5, 7), textcoords="offset points")
     plt.xlabel("Time (hours)")
     plt.ylabel("Distance (km)")
-    plt.title(f"Separation Over Time: {best_name}")
+    plt.title("Best Rendezvous: Separation Over Time")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
@@ -297,15 +306,33 @@ def main():
     plt.axis("equal")
     plt.xlabel("x position (km)")
     plt.ylabel("y position (km)")
-    plt.title(f"Target and Chaser Trajectories: {best_name}")
+    plt.title("Best Rendezvous Trajectory")
     plt.grid(True)
     plt.legend(loc="upper right")
     plt.tight_layout()
     plt.show()
 
+    return best_burns, optimizer_score, history
+
 
 if __name__ == "__main__":
-    main()
+    orbit_radius = 7_000_000
+    circular_speed = np.sqrt(mu / orbit_radius)
+    chaser_phase = np.deg2rad(-5)
+    target_state0 = [orbit_radius, 0, 0, circular_speed]
+    chaser_state0 = [
+        orbit_radius * np.cos(chaser_phase),
+        orbit_radius * np.sin(chaser_phase),
+        -circular_speed * np.sin(chaser_phase),
+        circular_speed * np.cos(chaser_phase)
+    ]
+    main(
+        chaser_state=chaser_state0,
+        target_state=target_state0,
+        num_burns=2,
+        weights=(1 / 100_000**2, 1 / 100**2, 1 / 100),
+        t_span=(0, 12_000)
+    )
 
     
     
