@@ -2,6 +2,7 @@ from scipy.integrate import solve_ivp
 from scipy.optimize import differential_evolution
 import numpy as np
 import matplotlib.pyplot as plt
+
 mu = 3.986 * 10**14
 earth_radius = 6.371e6
 theta = np.linspace(0, 2*np.pi, 300)
@@ -57,16 +58,23 @@ def cost(errors, weights, burns):
         + w_delta_v * fuel_usage(burns)
     )
 
-# def synodic_period(state):
-#     r = state[0]**2 + state[1]**2
-#     a = (-1)*((mu*))
+def period(state):
+    r = (state[0]**2 + state[1]**2)**0.5
+    v = (state[2]**2 + state[3]**2)**0.5
+    a = (-1)*((mu*r)/((r*(v**2)) - (2*mu)))
+    return 2*np.pi*(((a**3)/mu)**0.5)
+
+def synodic_period(c_state, t_state):
+    T1 = period(c_state)
+    T2 = period(t_state)
+    return ((T1*T2)/(abs(T2-T1)))
 
 # Assumptions:
 # All variables are provided correctly
 # Burns are executed in the order that they are stored in the burns array
 # Every burn is unique
 
-def score(burns, chaser_state, t_sol, t_span, weights = (1 / 100_000**2, 1 / 100**2, 1 / 100)):
+def score(burns, chaser_state, t_sol, t_span, weights):
     burns = np.asarray(burns).reshape(-1, 2)
 
     burn_times = burns[:, 1]
@@ -172,7 +180,7 @@ def trajectory(c_state, t_state, t_span, burns, weights, samples_per_segment=100
     ), cost(error(chaser_states[len(chaser_states)-1], t_final_state), weights, burns), target_loc_burn_n
 
 def rendezvous(c_state0, t_state0, num_burns, weights, t_span):
-    bounds = [(-100, 100), (t_span[0] + 60, t_span[1] - 60)] * num_burns
+    bounds = [(-500, 500), (t_span[0] + 60, t_span[1] - 60)] * num_burns
     t_eval = np.linspace(t_span[0], t_span[1], 5000)
     t_sol = solve_ivp(two_body_ode, t_span, t_state0, t_eval=t_eval, dense_output=True, method='DOP853', rtol=1e-6)
     result = differential_evolution(
@@ -182,7 +190,8 @@ def rendezvous(c_state0, t_state0, num_burns, weights, t_span):
         rng=np.random.default_rng(42))
 
     return result.x, result.fun
-    
+
+
 
 # set margin of error of 50 meters from target to define rendezvous complete
 # def rendezvous(c_state0, t_state0, t_span, t_eval):
@@ -251,7 +260,60 @@ def rendezvous(c_state0, t_state0, num_burns, weights, t_span):
 # distance_all = np.concatenate((distance_before, distance_after))
 # min_index = np.argmin(distance_all)
 
-def main(chaser_state, target_state, num_burns, weights, t_span):
+def main():
+    def read_state(spacecraft_name):
+        while True:
+            raw_state = input(
+                f"Enter the {spacecraft_name} initial state x y vx vy in SI units: "
+            )
+            try:
+                state = [float(value) for value in raw_state.replace(",", " ").split()]
+            except ValueError:
+                print("Enter four numeric values separated by spaces or commas.")
+                continue
+
+            if len(state) == 4:
+                return state
+            print("The state must contain exactly four values: x y vx vy.")
+
+    print("Positions are Earth-centered in metres; velocities are in metres per second.")
+    chaser_state = read_state("chaser")
+    target_state = read_state("target")
+
+    while True:
+        try:
+            num_burns = int(input("Enter the number of chaser burns: "))
+            if num_burns > 0:
+                break
+        except ValueError:
+            pass
+        print("The number of burns must be a positive integer.")
+
+    while True:
+        try:
+            final_time = float(input("Enter the mission duration in seconds: "))
+            if final_time > 120:
+                break
+        except ValueError:
+            pass
+        print("Mission duration must be greater than 120 seconds.")
+
+    # while True:
+    #     try:
+    #         n = float(input("Enter number of periods as an integer: "))
+    #         if n > 0:
+    #             break
+    #     except ValueError:
+    #         pass
+    #     print("The number of periods must be a positive integer.")
+
+    # period = synodic_period(chaser_state, target_state)
+    # final_time = period * n
+    print(f"Final Time: {final_time:.2f}")
+    # print(f"Synodic Period: {period:.2f}")
+
+    t_span = (0, final_time)
+    weights = (1 / 100_000**2, 1 / 100**2, 1 / 1000)
     best_parameters, optimizer_score = rendezvous(
         chaser_state,
         target_state,
@@ -316,23 +378,7 @@ def main(chaser_state, target_state, num_burns, weights, t_span):
 
 
 if __name__ == "__main__":
-    orbit_radius = 7_000_000
-    circular_speed = np.sqrt(mu / orbit_radius)
-    chaser_phase = np.deg2rad(-5)
-    target_state0 = [orbit_radius, 0, 0, circular_speed]
-    chaser_state0 = [
-        orbit_radius * np.cos(chaser_phase),
-        orbit_radius * np.sin(chaser_phase),
-        -circular_speed * np.sin(chaser_phase),
-        circular_speed * np.cos(chaser_phase)
-    ]
-    main(
-        chaser_state=chaser_state0,
-        target_state=target_state0,
-        num_burns=2,
-        weights=(1 / 100_000**2, 1 / 100**2, 1 / 100),
-        t_span=(0, 12_000)
-    )
+    main()
 
     
     
